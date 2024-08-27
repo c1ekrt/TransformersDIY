@@ -72,9 +72,9 @@ def get_batch(split):
     y_decoder_input = []
     y_target = []
     for i in ix:
-        x1 = torch.tensor([data.iloc[i.item(), 2].input_ids])
-        y1_decoder_input = torch.tensor([data.iloc[i.item(), 3].input_ids[:-1]])
-        y1_target = torch.tensor([data.iloc[i.item(), 3].input_ids[1:]])
+        x1 = torch.tensor([data.iloc[i.item(), 2].input_ids]) # <|SOS|> + context + <|EOS|>
+        y1_decoder_input = torch.tensor([data.iloc[i.item(), 3].input_ids[:-1]])    # <|SOS|> + target 
+        y1_target = torch.tensor([data.iloc[i.item(), 3].input_ids[1:]])            #  target + <|EOS|> 
         x.append(F.pad(x1, pad = (0, input_max - x1.numel()), mode='constant', value=0))
         y_decoder_input.append(F.pad(y1_decoder_input, pad = (0, output_max - y1_decoder_input.numel()), mode='constant', value=0))
         y_target.append(F.pad(y1_target, pad = (0, output_max - y1_target.numel()), mode='constant', value=0))
