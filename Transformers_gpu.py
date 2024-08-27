@@ -38,20 +38,32 @@ train, test = train_test_split(df, test_size=0.2, shuffle=True)
 train.info()
 test.info()
 
-input_max = 256
-output_max = 256
 
-# for ti in train['input_token']:
-#     if input_max < len(ti.input_ids):
-#         input_max = len(ti.input_ids)
-# for to in train['output_token']:
-#     if output_max < len(to.input_ids):
-#         output_max = len(to.input_ids)
-# print(input_max)
-# print(output_max)
+# ---**---
+# Param
+batch_size = 32
+block_size = 256
+max_iters = 100000
+eval_interval = 100 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
+learning_rate = 1e-4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cpu'
+eval_iters = 100
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
+save_interval = 1000
+from_scratch = False
+path = "model"
+load_path = "load_model"
+
+# ---**---
+
+input_max = block_size
+output_max = block_size
 
 print(train.head())
-# print(train['input_token'][1340].tokens())
 
 def get_batch(split):
     data = train if split == 'train' else test
@@ -74,31 +86,11 @@ def get_batch(split):
     y_target.to(device)
     return x, y_decoder_input, y_target
 
-batch_size = 32
-block_size = 256
-max_iters = 100000
-eval_interval = 10 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
-learning_rate = 1e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-# device = 'cpu'
-eval_iters = 10
-n_embd = 384
-n_head = 6
-n_layer = 6
-dropout = 0.2
-save_interval = 10
-from_scratch = False
-path = "model"
-load_path = "load_model"
-
 vocab_size_eng = eng_tokenizer.vocab_size
 vocab_size_tch = tch_tokenizer.vocab_size
 
-
 print(f"vocab_size of english = {vocab_size_eng}")
 print(f"vocab_size of tchinese = {vocab_size_tch}")
-# ---**---
-torch.manual_seed(9527)
 
 @torch.no_grad() # this telling PyTorch everything happens inside this function requires no grads hence requires no backward on
 def estimated_loss():
@@ -106,6 +98,9 @@ def estimated_loss():
     # model is set to evaluation phase
     # although there is no different on this model
     # however there are models that contains batch normalization, drop out layers which do make the difference
+    '''
+    Dropout and BatchNorm (and maybe some custom modules) behave differently during training and evaluation.
+    '''
     m.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -155,14 +150,8 @@ class Head(nn.Module):
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
-        
-        self.encoder_x = encoder_x # check cross attention or not
-        '''
-         If you have parameters in your model,
-         which should be saved and restored in the state_dict,
-         but not trained by the optimizer,
-         you should register them as buffers.
-        '''
+        # check cross attention model or not
+        self.encoder_x = encoder_x 
         # self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         self.dropout = nn.Dropout(dropout)
 
@@ -176,7 +165,7 @@ class Head(nn.Module):
         else:
             k = self.key(encoder_x)
         wei = q @ k.transpose(-2, -1) * C**-0.5 # (B,T,C) @ (B,C,T) -> (B,T,T)
-        # wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B,T,T)
+        # wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B,T,T) remove mask
         wei = F.softmax(wei, dim=-1) # (B,T,T)
         wei = self.dropout(wei)
       
@@ -245,10 +234,6 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
     
-
-    
-
-        
 class DecoderBlock(nn.Module):
 
     def __init__(self, n_embd, n_head): # n_embd: embedding dimension, n_head: the number head we would like
@@ -257,17 +242,15 @@ class DecoderBlock(nn.Module):
         self.sa1 = MaskedMultiHeadAttention(n_head, head_size)
         self.sa2 = CrossMultiHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embd)
-        self.ln1 = nn.LayerNorm(n_embd) # layernorm added
+        self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
         self.ln3 = nn.LayerNorm(n_embd)
     
     def forward(self, seq_input): # forward only allow one input
         x, encoder_output = seq_input[0], seq_input[1]
-        # print("Decoder block x ", x.shape)
         x = x + self.sa1(self.ln1(x)) # residual connection
-        x = x + self.sa2(self.ln2(x), encoder_output) # residual connection
+        x = x + self.sa2(self.ln2(x), encoder_output) 
         x = x + self.ffwd(self.ln3(x))
-        # print("Decoder block x out ", x.shape)
         seq_output = (x, encoder_output)
         return seq_output
 
@@ -282,10 +265,8 @@ class EncoderBlock(nn.Module):
         self.ln2 = nn.LayerNorm(n_embd)
     
     def forward(self, x):
-        # print("Encoder block x ", x.shape)
         x = x + self.sa(self.ln1(x)) # residual connection
         x = x + self.ffwd(self.ln2(x))
-        # print("Encoder block x out ", x.shape)
         return x
         
 '''----------------------------------------------------------------------------------------------'''
@@ -297,31 +278,19 @@ class Decoder(nn.Module):
     # each token directly read of the logits for the token from lookup table
     self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     self.position_embedding_table = nn.Embedding(block_size, n_embd)
-
-    self.block = nn.Sequential(*[DecoderBlock(n_embd, n_head=n_head) for _ in range(n_layer)]) # Sequential not work with multiple input
     
-
+    # Notice: Sequential not work with multiple input
+    self.block = nn.Sequential(*[DecoderBlock(n_embd, n_head=n_head) for _ in range(n_layer)]) 
+    
   def forward(self, encoder_output, decoder_input): # target is optional
     B, T = decoder_input.shape
-    # print(B, T)
     # idx and table are both [B,T] tensor of integers
     tok_embd = self.token_embedding_table(decoder_input.to(device)) # [B,T,C]
     pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # [T,C]
-    # print("Decoder t ", tok_embd.shape)
-    # print("Decoder p ", pos_embd.shape)
     x = tok_embd + pos_embd # [B,T,C] x not only hold token identity, but also the position token occur.
-    # print("Decoder x ", x.shape)
-    seq_input = (x, encoder_output)
-    # print("Decoder_pre packed x", seq_input[0].shape)
-    x = self.block(seq_input) # apply one-head self-attention (B,T,C)
+    seq_input = (x, encoder_output) # pack the input information since nn.Sequential cannot handle multiple input
+    x = self.block(seq_input)
     return x[0]
-
-    
-
-    # in PyTorch cross_entropy if we have a multidimensional input, be sure that channel is in the second dimension
-    
-    
-
     
 class Encoder(nn.Module):
     def __init__(self, vocab_size):
@@ -331,19 +300,12 @@ class Encoder(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         self.block = nn.Sequential(*[EncoderBlock(n_embd, n_head=n_head) for _ in range(n_layer)])
     
-    def forward(self, idx): # target is optional
-        # print("Encoder ", idx.shape)
+    def forward(self, idx):
         B, T = idx.shape
-        # idx and table are both [B,T] tensor of integers
-
         tok_embd = self.token_embedding_table(idx.to(device)) # [B,T,C]
         pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # [T,C]
-        # print("Encoder t ", tok_embd.shape)
-        # print("Encoder p ", pos_embd.shape)
         x = tok_embd + pos_embd # [B,T,C] x not only hold token identity, but also the position token occur.
-        # print("Encoder x ", x.shape)
         x = self.block(x) # apply one-head self-attention (B,T,C)
-        # print("Encoder x out ", x.shape)
       
         return x
 
@@ -358,7 +320,6 @@ class Transformers_Model(nn.Module):
         self.lm_head = nn.Linear(n_embd, decoder_vocab_size)
         
     def forward(self, idx, decoder_input=None, targets=None):
-        # print("Trans ",idx.shape)
         encoder_output = self.encoder(idx)
         x = self.decoder(encoder_output, decoder_input)
         x = self.ln(x)
@@ -384,7 +345,6 @@ class Transformers_Model(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             decoder_current_input.append(idx_next.item())
             if idx_next == empty_word[1] or len(decoder_current_input)>=255:
-                # print(decoder_current_input)
                 return tch_tokenizer.decode(decoder_current_input, skip_special_tokens=True)
         
 
