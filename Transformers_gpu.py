@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from sklearn.model_selection import train_test_split
 from tokenizers import Encoding
 from transformers import AutoTokenizer
+import os
 
 def read(file="str") -> pd.DataFrame():
     df = pd.read_parquet(file, engine='fastparquet')
@@ -76,17 +77,23 @@ def get_batch(split):
 batch_size = 32
 block_size = 256
 max_iters = 100000
-eval_interval = 50 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
+eval_interval = 10 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
 learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
-eval_iters = 50
+eval_iters = 10
 n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+save_interval = 10
+from_scratch = False
+path = "model"
+load_path = "load_model"
+
 vocab_size_eng = eng_tokenizer.vocab_size
 vocab_size_tch = tch_tokenizer.vocab_size
+
 
 print(f"vocab_size of english = {vocab_size_eng}")
 print(f"vocab_size of tchinese = {vocab_size_tch}")
@@ -382,6 +389,9 @@ class Transformers_Model(nn.Module):
         
 
 model = Transformers_Model(encoder_vocab_size=vocab_size_eng, decoder_vocab_size=vocab_size_tch)
+if from_scratch==False:
+    file = os.listdir(load_path)[0]
+    model.load_state_dict(torch.load(os.path.join(load_path,file)))
 m = model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
@@ -391,6 +401,13 @@ for iter in range(max_iters):
     if iter % eval_interval == 0:
         losses = estimated_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        
+    if iter % save_interval == 0:
+        filename = f"pytorch_model_{iter}_step.pt"
+        torch.save(m.state_dict(), os.path.join(path, filename))
+        if len(os.listdir(path)) > 3:
+            delete_iter = iter - 3 * save_interval
+            os.remove(os.path.join(path, f"pytorch_model_{delete_iter}_step.pt"))
     
     # sample on batch of data
     xb, y_decoder_inputb, y_targetb = get_batch('train')
