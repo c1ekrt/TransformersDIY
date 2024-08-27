@@ -43,7 +43,7 @@ test.info()
 # Param
 batch_size = 32
 block_size = 256
-max_iters = 100000
+max_iters = 1000
 eval_interval = 100 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
 learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -351,7 +351,7 @@ class Transformers_Model(nn.Module):
 model = Transformers_Model(encoder_vocab_size=vocab_size_eng, decoder_vocab_size=vocab_size_tch)
 if from_scratch==False:
     file = os.listdir(load_path)[0]
-    model.load_state_dict(torch.load(os.path.join(load_path,file)))
+    model.load_state_dict(torch.load(os.path.join(load_path,file), weights_only=True))
 m = model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
