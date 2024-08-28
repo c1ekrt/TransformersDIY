@@ -34,7 +34,7 @@ df["output_token"] = df.apply(lambda row: tch_tokenizer(row['output']), axis=1)
 empty_word = tch_tokenizer.encode("")
 print(empty_word)
 
-train, test = train_test_split(df, test_size=0.2, shuffle=True)
+train, test = train_test_split(df, test_size=0.2, shuffle=True, random_state=42)
 train.info()
 test.info()
 
@@ -43,7 +43,7 @@ test.info()
 # Param
 batch_size = 32
 block_size = 256
-max_iters = 1000
+max_iters = 30000
 eval_interval = 100 # for estimated_loss which smooth the loss by averaging eval_interval number of loss
 learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -95,12 +95,11 @@ print(f"vocab_size of tchinese = {vocab_size_tch}")
 @torch.no_grad() # this telling PyTorch everything happens inside this function requires no grads hence requires no backward on
 def estimated_loss():
     out = {}
-    # model is set to evaluation phase
-    # although there is no different on this model
-    # however there are models that contains batch normalization, drop out layers which do make the difference
+    
     '''
     Dropout and BatchNorm (and maybe some custom modules) behave differently during training and evaluation.
     '''
+    # model is set to evaluation phase
     m.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -144,7 +143,10 @@ class MaskedHead(nn.Module):
         return out
 
 class Head(nn.Module):
-    
+    '''
+    if encoder_x is not None then it is cross-attention(information from encoder output)
+    otherwise it is self-attention
+    '''
     def __init__(self, head_size, encoder_x=None):
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
@@ -181,7 +183,7 @@ class Head(nn.Module):
     
 
 class MaskedMultiHeadAttention(nn.Module):
-    '''multiple self-attention in parallel'''
+    '''multiple attention in parallel -- the Nx in paper'''
     
     def __init__(self, num_heads, head_size):
         super().__init__()
@@ -196,6 +198,8 @@ class MaskedMultiHeadAttention(nn.Module):
         return out
 
 class CrossMultiHeadAttention(nn.Module):
+    '''multiple attention in parallel -- the Nx in paper'''
+    
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
@@ -207,7 +211,7 @@ class CrossMultiHeadAttention(nn.Module):
         return out
     
 class MultiHeadAttention(nn.Module):
-    '''multiple self-attention in parallel'''
+    '''multiple attention in parallel -- the Nx in paper'''
 
     def __init__(self, num_heads, head_size):
         super().__init__()
@@ -380,5 +384,6 @@ for iter in range(max_iters):
 context = "I am curious about the real-world applications of synthetic data that you’ve actually used in your machine learning projects."
 print(m.translate(context))
 
-
-
+# do not expect the accurate output since the model only train for such short amount of time, 
+# but there are some improvement after this amount of time of training.
+# it would work better with similar languages ie English to german.
